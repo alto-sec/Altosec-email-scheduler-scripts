@@ -15,6 +15,7 @@
   프록시(Altosec-proxy-server) 러너와 같은 PC에 두면:
   - Runner 폴더는 반드시 다름 (기본 C:\actions-runner-email-scheduler). C:\actions-runner 에 프록시 .runner 가 있어도 이 스크립트는 다른 경로를 쓴다.
   - Deploy 폴더 기본 C:\altosec-deploy-email (프록시 C:\altosec-deploy 와 분리).
+  - 시스템 변수 ALTOSEC_EMAIL_DEPLOY_DIR 로만 이메일 배포 경로를 넣는다(ALTOSEC_DEPLOY_DIR 는 프록시 부트스트랩이 쓰므로 덮어쓰지 않음).
 
 .PARAMETER Tls
   공개 FQDN + Let's Encrypt(ACME) 배포 경로. 없으면 HTTP-only(도메인 설정 없음).
@@ -92,7 +93,7 @@ if ([string]::IsNullOrWhiteSpace($RunnerRoot)) {
     $RunnerRoot = Read-WithDefault -Prompt 'Runner install folder' -Default 'C:\actions-runner-email-scheduler'
 }
 if ([string]::IsNullOrWhiteSpace($DeployDir)) {
-    $DeployDir = Read-WithDefault -Prompt 'Deploy extract folder (ALTOSEC_DEPLOY_DIR)' -Default 'C:\altosec-deploy-email'
+    $DeployDir = Read-WithDefault -Prompt 'Deploy extract folder (ALTOSEC_EMAIL_DEPLOY_DIR; not ALTOSEC_DEPLOY_DIR — that is for proxy)' -Default 'C:\altosec-deploy-email'
 }
 if ($useTls -and [string]::IsNullOrWhiteSpace($AcmeContactEmail)) {
     $AcmeContactEmail = Read-WithDefault -Prompt "Let's Encrypt ACME contact email (saved to deploy folder only, not system env)" -Default 'altosecteam@gmail.com'
@@ -114,15 +115,16 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker CLI 가 없습니다. Docker Desktop 설치·기동 후 docker version 으로 확인하세요.'
 }
 
-[Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DIR', $DeployDir.Trim(), 'Machine')
+# Email-only Machine var so the same PC can run proxy (ALTOSEC_DEPLOY_DIR -> C:\altosec-deploy) without collisions.
+[Environment]::SetEnvironmentVariable('ALTOSEC_EMAIL_DEPLOY_DIR', $DeployDir.Trim(), 'Machine')
 if (-not $useTls) {
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_HTTP_ONLY', 'true', 'Machine')
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DOMAIN', '', 'Machine')
-    Write-Host "Machine env: ALTOSEC_DEPLOY_HTTP_ONLY=true ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim()) (HTTP / IP — no public domain)"
+    Write-Host "Machine env: ALTOSEC_DEPLOY_HTTP_ONLY=true ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim()) (HTTP / IP — no public domain)"
 } else {
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_HTTP_ONLY', '', 'Machine')
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DOMAIN', $DeployDomainFqdn.Trim(), 'Machine')
-    Write-Host "Machine env: ALTOSEC_DEPLOY_DOMAIN=$($DeployDomainFqdn.Trim()) ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim()) (-Tls)"
+    Write-Host "Machine env: ALTOSEC_DEPLOY_DOMAIN=$($DeployDomainFqdn.Trim()) ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim()) (-Tls)"
 }
 
 $deployRoot = $DeployDir.Trim()
