@@ -139,12 +139,26 @@ try {
     if ($_.Exception.Message -notmatch 'already a member') { throw }
 }
 
-$fwName = 'AltosecEmailSchedulerACME80'
-if (-not (Get-NetFirewallRule -Name $fwName -ErrorAction SilentlyContinue)) {
-    $fwDisplay = if ($useTls) { 'Altosec Email Scheduler ACME HTTP-01 (TCP 80 inbound)' } else { 'Altosec Email Scheduler HTTP (TCP 80 inbound)' }
-    New-NetFirewallRule -Name $fwName -DisplayName $fwDisplay `
-        -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Any | Out-Null
-    Write-Host "Created firewall rule $fwName (TCP 80)."
+if ($useTls) {
+    $fw80 = 'AltosecEmailSchedulerACME80'
+    if (-not (Get-NetFirewallRule -Name $fw80 -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -Name $fw80 -DisplayName 'Altosec Email Scheduler ACME HTTP-01 (TCP 80 inbound)' `
+            -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Any | Out-Null
+        Write-Host "Created firewall rule $fw80 (TCP 80)."
+    }
+    $fw443 = 'AltosecEmailSchedulerHTTPS443'
+    if (-not (Get-NetFirewallRule -Name $fw443 -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -Name $fw443 -DisplayName 'Altosec Email Scheduler HTTPS (TCP 443 inbound)' `
+            -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow -Profile Any | Out-Null
+        Write-Host "Created firewall rule $fw443 (TCP 443)."
+    }
+} else {
+    $fw2026 = 'AltosecEmailSchedulerHTTP2026'
+    if (-not (Get-NetFirewallRule -Name $fw2026 -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule -Name $fw2026 -DisplayName 'Altosec Email Scheduler API (TCP 2026 inbound)' `
+            -Direction Inbound -Protocol TCP -LocalPort 2026 -Action Allow -Profile Any | Out-Null
+        Write-Host "Created firewall rule $fw2026 (TCP 2026)."
+    }
 }
 
 if (-not (Test-Path (Join-Path $RunnerRoot 'config.cmd'))) {
