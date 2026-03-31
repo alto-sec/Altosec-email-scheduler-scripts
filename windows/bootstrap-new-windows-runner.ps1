@@ -9,19 +9,21 @@
   (동일 내용이 windows/bootstrap-new-windows-runner.ps1 로도 올라갈 수 있음 — 예전 URL 호환)
 
   비공개 GHCR 정책: 컨테이너 기동은 이 레포의 GitHub Deploy 워크플로를 실행한다.
-  파라미터 없이 실행(예: iex(irm raw URL))하면 필수 값은 Read-Host 로 묻는다.
+  기본 동작: 메인 서버가 http://IP:포트 로만 붙는 전제 — 공개 FQDN·ACME 를 묻지 않고 ALTOSEC_DEPLOY_HTTP_ONLY=true 를 켠다.
+  공개 DNS + Let's Encrypt(TLS)가 필요하면 -Tls 또는 실행 전 ALTOSEC_BOOTSTRAP_TLS=1.
 
   프록시(Altosec-proxy-server) 러너와 같은 PC에 두면:
   - Runner 폴더는 반드시 다름 (기본 C:\actions-runner-email-scheduler). C:\actions-runner 에 프록시 .runner 가 있어도 이 스크립트는 다른 경로를 쓴다.
   - Deploy 폴더 기본 C:\altosec-deploy-email (프록시 C:\altosec-deploy 와 분리).
 
-  HTTP-only (메인 서버가 http://IP:포트 로만 호출): -HttpOnly 또는 ALTOSEC_BOOTSTRAP_HTTP_ONLY=1
+.PARAMETER Tls
+  공개 FQDN + Let's Encrypt(ACME) 배포 경로. 없으면 HTTP-only(도메인 설정 없음).
 
 .PARAMETER HttpOnly
-  도메인·Let's Encrypt 없이 배포 (IP/HTTP 전용).
+  명시적으로 HTTP-only (기본과 동일; 스크립트에서 -Tls 를 끔).
 
 .PARAMETER DeployDomainFqdn
-  공개 FQDN (TLS 배포 시). HttpOnly 이면 무시.
+  -Tls 일 때만 사용. 공개 FQDN.
 
 .PARAMETER RunnerName
   러너 고유 이름.
@@ -39,7 +41,7 @@
   기본 C:\altosec-deploy-email
 
 .PARAMETER AcmeContactEmail
-  TLS 시 Let's Encrypt 연락처. 배포 폴더의 acme-contact-email.txt 로만 저장.
+  -Tls 일 때 Let's Encrypt 연락처. 배포 폴더의 acme-contact-email.txt 로만 저장.
 #>
 [CmdletBinding()]
 param(
@@ -50,14 +52,17 @@ param(
     [string] $RunnerRoot = '',
     [string] $DeployDir = '',
     [string] $AcmeContactEmail = '',
+    [switch] $Tls,
     [switch] $HttpOnly
 )
 
 $ErrorActionPreference = 'Stop'
 
-if ($env:ALTOSEC_BOOTSTRAP_HTTP_ONLY -match '^(1|true|yes|on)$') {
-    $HttpOnly = $true
-}
+$useTls = $false
+if ($Tls) { $useTls = $true }
+if ($HttpOnly) { $useTls = $false }
+if ($env:ALTOSEC_BOOTSTRAP_TLS -match '^(1|true|yes|on)$') { $useTls = $true }
+if ($env:ALTOSEC_BOOTSTRAP_HTTP_ONLY -match '^(1|true|yes|on)$') { $useTls = $false }
 
 function Read-WithDefault {
     param(
@@ -70,7 +75,7 @@ function Read-WithDefault {
     return $line.Trim()
 }
 
-if (-not $HttpOnly -and [string]::IsNullOrWhiteSpace($DeployDomainFqdn)) {
+if ($useTls -and [string]::IsNullOrWhiteSpace($DeployDomainFqdn)) {
     $DeployDomainFqdn = Read-Host 'Public FQDN (DNS A -> this host; ALTOSEC_DEPLOY_DOMAIN)'
 }
 if ([string]::IsNullOrWhiteSpace($RunnerName)) {
@@ -89,12 +94,12 @@ if ([string]::IsNullOrWhiteSpace($RunnerRoot)) {
 if ([string]::IsNullOrWhiteSpace($DeployDir)) {
     $DeployDir = Read-WithDefault -Prompt 'Deploy extract folder (ALTOSEC_DEPLOY_DIR)' -Default 'C:\altosec-deploy-email'
 }
-if (-not $HttpOnly -and [string]::IsNullOrWhiteSpace($AcmeContactEmail)) {
+if ($useTls -and [string]::IsNullOrWhiteSpace($AcmeContactEmail)) {
     $AcmeContactEmail = Read-WithDefault -Prompt "Let's Encrypt ACME contact email (saved to deploy folder only, not system env)" -Default 'altosecteam@gmail.com'
 }
 
-if (-not $HttpOnly) {
-    if ([string]::IsNullOrWhiteSpace($DeployDomainFqdn)) { throw 'FQDN is required (or use -HttpOnly for IP/HTTP-only deploy).' }
+if ($useTls) {
+    if ([string]::IsNullOrWhiteSpace($DeployDomainFqdn)) { throw 'FQDN is required for -Tls (default is HTTP-only / no domain).' }
     $AcmeContactEmail = $AcmeContactEmail.Trim()
     if ([string]::IsNullOrWhiteSpace($AcmeContactEmail)) { throw 'ACME contact email is required for TLS deploy.' }
     if ($AcmeContactEmail -match '(?i)@example\.(com|org|net)$') {
@@ -110,19 +115,19 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DIR', $DeployDir.Trim(), 'Machine')
-if ($HttpOnly) {
+if (-not $useTls) {
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_HTTP_ONLY', 'true', 'Machine')
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DOMAIN', '', 'Machine')
-    Write-Host "Machine env: ALTOSEC_DEPLOY_HTTP_ONLY=true ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim()) (no TLS / no FQDN)"
+    Write-Host "Machine env: ALTOSEC_DEPLOY_HTTP_ONLY=true ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim()) (HTTP / IP — no public domain)"
 } else {
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_HTTP_ONLY', '', 'Machine')
     [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DOMAIN', $DeployDomainFqdn.Trim(), 'Machine')
-    Write-Host "Machine env: ALTOSEC_DEPLOY_DOMAIN=$($DeployDomainFqdn.Trim()) ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim())"
+    Write-Host "Machine env: ALTOSEC_DEPLOY_DOMAIN=$($DeployDomainFqdn.Trim()) ALTOSEC_DEPLOY_DIR=$($DeployDir.Trim()) (-Tls)"
 }
 
 $deployRoot = $DeployDir.Trim()
 [void][System.IO.Directory]::CreateDirectory($deployRoot)
-if (-not $HttpOnly) {
+if ($useTls) {
     $acmePath = Join-Path $deployRoot 'acme-contact-email.txt'
     [System.IO.File]::WriteAllText($acmePath, $AcmeContactEmail, [System.Text.UTF8Encoding]::new($false))
     Write-Host "Wrote ACME contact for Deploy workflow: $acmePath (not stored in system environment variables)."
@@ -136,7 +141,8 @@ try {
 
 $fwName = 'AltosecEmailSchedulerACME80'
 if (-not (Get-NetFirewallRule -Name $fwName -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -Name $fwName -DisplayName 'Altosec Email Scheduler ACME HTTP-01 (TCP 80 inbound)' `
+    $fwDisplay = if ($useTls) { 'Altosec Email Scheduler ACME HTTP-01 (TCP 80 inbound)' } else { 'Altosec Email Scheduler HTTP (TCP 80 inbound)' }
+    New-NetFirewallRule -Name $fwName -DisplayName $fwDisplay `
         -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -Profile Any | Out-Null
     Write-Host "Created firewall rule $fwName (TCP 80)."
 }
