@@ -1,10 +1,11 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  운영 중 배포 FQDN 변경: ALTOSEC_DEPLOY_DOMAIN 시스템 변수 + GitHub Actions Runner 서비스 재시작.
+  이메일 스케줄러 TLS 전용: ALTOSEC_EMAIL_DEPLOY_DOMAIN 시스템 변수 + Runner 재시작. (프록시 ALTOSEC_DEPLOY_DOMAIN 은 건드리지 않음.)
 
 .DESCRIPTION
-  TLS + 공개 FQDN 배포 전용(ALTOSEC_DEPLOY_DOMAIN). 메인 서버가 http://IP 만 쓰는 HTTP-only 배포에는 필요 없음.
+  TLS + 공개 FQDN 이 필요한 이메일 배포 경로만. HTTP-only 이메일에는 불필요.
+  프록시 도메인은 Altosec-proxy-server 쪽 스크립트에서 관리한다 — 이 스크립트는 ALTOSEC_DEPLOY_DOMAIN 을 쓰지 않는다.
   비공개 GHCR 정책: TLS·pull·compose 는 GitHub Actions Deploy 로 수행.
   파라미터 없이 실행(예: iex(irm raw URL))하면 Read-Host 로 새 FQDN 을 묻는다.
 
@@ -25,8 +26,8 @@ if ([string]::IsNullOrWhiteSpace($NewFqdn)) {
 $v = $NewFqdn.Trim().ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($v)) { throw 'FQDN is required.' }
 
-[Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_DOMAIN', $v, 'Machine')
-Write-Host "Machine ALTOSEC_DEPLOY_DOMAIN=$v"
+[Environment]::SetEnvironmentVariable('ALTOSEC_EMAIL_DEPLOY_DOMAIN', $v, 'Machine')
+Write-Host "Machine ALTOSEC_EMAIL_DEPLOY_DOMAIN=$v (proxy ALTOSEC_DEPLOY_DOMAIN unchanged)"
 
 Get-Service 'actions.runner*' | Restart-Service
 Write-Host 'Runner service restarted.'
