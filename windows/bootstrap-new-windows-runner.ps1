@@ -1,23 +1,36 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  Altosec Email Scheduler 전용: Windows 러너 설치·등록.
+  Altosec Email Scheduler — Windows: WSL2 mirrored-networking setup + runner registration.
 
 .DESCRIPTION
-  대상 앱 레포: https://github.com/alto-sec/Altosec-email-scheduler
-  공개 raw: alto-sec/Altosec-email-scheduler-scripts/windows/bootstrap-email-scheduler-runner.ps1
-  (동일 내용이 windows/bootstrap-new-windows-runner.ps1 로도 올라갈 수 있음 — 예전 URL 호환)
+  Target app repo: https://github.com/alto-sec/Altosec-email-scheduler
+  Public raw: alto-sec/Altosec-email-scheduler-scripts/windows/bootstrap-email-scheduler-runner.ps1
+  (also published as bootstrap-new-windows-runner.ps1 for legacy URL compatibility)
 
-  비공개 GHCR 정책: 컨테이너 기동은 이 레포의 GitHub Deploy 워크플로를 실행한다.
-  기본 동작: 메인 서버가 http://IP:포트 로만 붙는 전제 — 공개 FQDN·ACME 를 묻지 않고 ALTOSEC_DEPLOY_HTTP_ONLY=true 를 켠다.
-  공개 DNS + Let's Encrypt(TLS)가 필요하면 -Tls 또는 실행 전 ALTOSEC_BOOTSTRAP_TLS=1.
+  APPROACH — Docker Engine (not Docker Desktop):
+  This script runs on Windows and configures WSL2 with "mirrored" networking so that
+  when the Linux runner inside WSL2 starts a Docker container with network_mode: host,
+  the container shares the actual Windows network interfaces and sees real client IPs.
 
-  프록시(Altosec-proxy-server) 러너와 같은 PC에 두면:
-  - Runner 폴더는 반드시 다름 (기본 C:\actions-runner-email-scheduler). C:\actions-runner 에 프록시 .runner 가 있어도 이 스크립트는 다른 경로를 쓴다.
-  - Deploy 폴더 기본 C:\altosec-deploy-email (프록시 C:\altosec-deploy 와 분리).
-  - 시스템 변수 ALTOSEC_EMAIL_DEPLOY_DIR 로만 이메일 배포 경로를 넣는다(ALTOSEC_DEPLOY_DIR 는 프록시 부트스트랩이 쓰므로 덮어쓰지 않음).
-  - ALTOSEC_DEPLOY_DOMAIN 은 프록시 전용이다. 이 스크립트는 절대 설정/삭제하지 않는다(같은 PC에서 프록시 도메인이 지워지지 않게).
-  - 이메일이 TLS(-Tls)를 쓸 때만 공개 FQDN 을 ALTOSEC_EMAIL_DEPLOY_DOMAIN 에 넣는다.
+  After this script runs:
+    1. WSL2 is configured for mirrored networking (~/.wslconfig).
+    2. A Windows inbound firewall rule is created for the deploy port.
+    3. The GitHub Actions runner is registered as a Windows service.
+
+  The runner itself (and Docker Engine) runs INSIDE WSL2 Ubuntu.
+  To complete setup, open WSL2 Ubuntu and run:
+    sudo bash /mnt/path/scripts/linux/bootstrap-email-scheduler-runner.sh
+
+  Or use the one-liner (see README). The Linux runner appears with "Linux" label on GitHub.
+  Use the "Deploy self-hosted Linux" workflow for deployments from Linux / WSL2 runners.
+
+  SHARED HOST (proxy + email on same PC):
+  - Runner folder: C:\actions-runner-email-scheduler (proxy uses C:\actions-runner)
+  - Deploy folder: C:\altosec-deploy-email (proxy uses C:\altosec-deploy)
+  - System var: ALTOSEC_EMAIL_DEPLOY_DIR only (never ALTOSEC_DEPLOY_DIR — proxy owns that)
+  - ALTOSEC_DEPLOY_DOMAIN: proxy-only; this script never sets or clears it
+  - Email TLS (-Tls): ALTOSEC_EMAIL_DEPLOY_DOMAIN only
 
 .PARAMETER Tls
   공개 FQDN + Let's Encrypt(ACME) 배포 경로. 없으면 HTTP-only(도메인 설정 없음).
@@ -113,8 +126,44 @@ if ([string]::IsNullOrWhiteSpace($RunnerName)) { throw 'Runner name is required.
 if ([string]::IsNullOrWhiteSpace($RegistrationToken)) { throw 'Registration token is required.' }
 $RunnerName = $RunnerName.Trim()
 
+# ── WSL2 mirrored networking ──────────────────────────────────────────────────
+# Docker Engine runs inside WSL2 Ubuntu. With networkingMode=mirrored the WSL2
+# VM shares Windows' network adapters, so Docker containers using network_mode: host
+# bind directly to the Windows NIC and see real inbound client IPs (no NAT).
+# This is the WSL2-native replacement for Docker Desktop's "mirrored" setting.
+$WslConfigPath = Join-Path $env:USERPROFILE '.wslconfig'
+$MirroredSection = "[wsl2]`nnetworkingMode=mirrored`n"
+if (Test-Path $WslConfigPath) {
+    $existing = Get-Content $WslConfigPath -Raw -ErrorAction SilentlyContinue
+    if ($existing -notmatch 'networkingMode\s*=\s*mirrored') {
+        if ($existing -match '\[wsl2\]') {
+            # Inject into existing [wsl2] block
+            (Get-Content $WslConfigPath) | ForEach-Object {
+                $_
+                if ($_ -match '^\[wsl2\]') { 'networkingMode=mirrored' }
+            } | Set-Content $WslConfigPath
+        } else {
+            Add-Content $WslConfigPath "`n[wsl2]`nnetworkingMode=mirrored"
+        }
+        Write-Host "Added networkingMode=mirrored to $WslConfigPath."
+        Write-Host "IMPORTANT: run 'wsl --shutdown' and restart WSL2 for this to take effect."
+    } else {
+        Write-Host "WSL2 mirrored networking already configured in $WslConfigPath."
+    }
+} else {
+    [System.IO.File]::WriteAllText($WslConfigPath, $MirroredSection, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Created $WslConfigPath with networkingMode=mirrored."
+    Write-Host "IMPORTANT: run 'wsl --shutdown' and restart WSL2 for this to take effect."
+}
+
+# Docker Engine availability check (must be installed inside WSL2 Ubuntu)
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw 'Docker CLI 가 없습니다. Docker Desktop 설치·기동 후 docker version 으로 확인하세요.'
+    Write-Warning @"
+Docker CLI not found in Windows PATH.
+This is expected if Docker Engine runs inside WSL2 (not Docker Desktop).
+Complete Docker Engine setup by running inside WSL2 Ubuntu:
+  sudo bash scripts/linux/bootstrap-email-scheduler-runner.sh
+"@
 }
 
 # Email-only Machine var so the same PC can run proxy (ALTOSEC_DEPLOY_DIR -> C:\altosec-deploy) without collisions.
@@ -137,11 +186,7 @@ if ($useTls) {
     Write-Host "Wrote ACME contact for Deploy workflow: $acmePath (not stored in system environment variables)."
 }
 
-try {
-    Add-LocalGroupMember -Group 'docker-users' -Member 'NT AUTHORITY\SYSTEM'
-} catch {
-    if ($_.Exception.Message -notmatch 'already a member') { throw }
-}
+# docker-users group is Docker Desktop-specific — not needed with Docker Engine.
 
 if ($useTls) {
     $fw80 = 'AltosecEmailSchedulerACME80'
@@ -181,11 +226,13 @@ if (-not (Test-Path (Join-Path $RunnerRoot 'config.cmd'))) {
 Push-Location $RunnerRoot
 if (-not (Test-Path '.\.runner')) {
     $cfg = Join-Path $RunnerRoot 'config.cmd'
+    # Unique label = runner name so Deploy matrix jobs pin to this host (runs-on includes matrix.runner_name).
+    $labelList = "self-hosted,Windows,altosec-proxy-node,$RunnerName"
     $proc = Start-Process -FilePath $cfg -WorkingDirectory $RunnerRoot -ArgumentList @(
         '--url', $RepoUrl,
         '--token', $RegistrationToken,
         '--name', $RunnerName,
-        '--labels', 'self-hosted,Windows,altosec-proxy-node',
+        '--labels', $labelList,
         '--unattended',
         '--runasservice'
     ) -Wait -PassThru -NoNewWindow
@@ -202,4 +249,4 @@ Get-CimInstance Win32_Service -Filter "Name LIKE 'actions.runner%'" | ForEach-Ob
 }
 
 Get-Service 'actions.runner*' | Restart-Service
-Write-Host 'Done. GitHub → Altosec-email-scheduler → Runners 에서 Idle 인지 확인한 뒤 Deploy 워크플로를 실행하세요.'
+Write-Host 'Done. Confirm Idle under GitHub → Altosec-email-scheduler → Runners, then run the Deploy workflow.'
