@@ -71,12 +71,13 @@ REPO_URL="${REPO_URL:-https://github.com/alto-sec/Altosec-email-scheduler}"
 RUNNER_SVC_USER="runner-svc"
 
 # ── interactive prompts ───────────────────────────────────────────────────────
+# Always read from /dev/tty so prompts work even when stdin is a pipe
+# (e.g. curl ... | sudo bash).
 read_val() {
-  # read_val VAR_NAME "Prompt" ["default"]
   local var="$1" prompt="$2" default="${3:-}" val
   if [[ -n "${!var:-}" ]]; then return; fi
   local hint=""; [[ -n "$default" ]] && hint=" [$default]"
-  read -rp "$prompt$hint: " val
+  read -rp "$prompt$hint: " val </dev/tty
   printf -v "$var" '%s' "${val:-$default}"
 }
 

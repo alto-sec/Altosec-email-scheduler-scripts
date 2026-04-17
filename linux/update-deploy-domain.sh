@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$NEW_FQDN" ]]; then
-  read -rp "New public FQDN (DNS A -> this server): " NEW_FQDN
+  read -rp "New public FQDN (DNS A -> this server): " NEW_FQDN </dev/tty
 fi
 
 NEW_FQDN="${NEW_FQDN//[[:space:]]/}"
