@@ -1,27 +1,18 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-  Altosec Email Scheduler — Windows: WSL2 mirrored networking + firewall setup.
+  Altosec Email Scheduler — Windows: WSL2 Ubuntu install + mirrored networking + firewall.
 
 .DESCRIPTION
-  This script does three things on the Windows side:
-    1. Writes networkingMode=mirrored to %USERPROFILE%\.wslconfig so that Docker
-       containers using network_mode: host inside WSL2 bind to the real Windows
-       network adapters and see real client IPs (no NAT).
-    2. Opens a Windows Firewall inbound rule for TCP 2026.
-    3. Sets the Machine environment variable ALTOSEC_EMAIL_DEPLOY_DIR.
-
-  The GitHub Actions runner and Docker Engine are installed INSIDE WSL2 Ubuntu,
-  not on Windows. After this script finishes, run inside WSL2 Ubuntu:
-
-    wsl --shutdown   (restart WSL2 so mirrored networking takes effect)
-    wsl -d Ubuntu
-    curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash
+  1. Enables WSL2 and installs Ubuntu if not already present (idempotent).
+  2. Writes networkingMode=mirrored to %USERPROFILE%\.wslconfig.
+  3. Restarts WSL2 so mirrored networking takes effect.
+  4. Opens Windows Firewall inbound rule TCP 2026.
+  5. Sets Machine env ALTOSEC_EMAIL_DEPLOY_DIR.
+  6. Runs the Linux bootstrap inside WSL2 Ubuntu (installs Docker Engine + runner).
 
 .PARAMETER DeployDir
-  Windows-side path that maps to the WSL2 deploy directory.
-  Stored as Machine env ALTOSEC_EMAIL_DEPLOY_DIR so the Deploy workflow can find it.
-  Default: C:\altosec-deploy-email
+  Windows-side deploy path. Default: C:\altosec-deploy-email
 #>
 [CmdletBinding()]
 param(
@@ -31,12 +22,27 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($DeployDir)) {
-    $hint = ' [C:\altosec-deploy-email]'
-    $line = Read-Host "Deploy directory (ALTOSEC_EMAIL_DEPLOY_DIR)$hint"
+    $line = Read-Host 'Deploy directory (ALTOSEC_EMAIL_DEPLOY_DIR) [C:\altosec-deploy-email]'
     $DeployDir = if ([string]::IsNullOrWhiteSpace($line)) { 'C:\altosec-deploy-email' } else { $line.Trim() }
 }
 
-# ── 1. WSL2 mirrored networking ───────────────────────────────────────────────
+# ── 1. WSL2 feature + Ubuntu install (idempotent) ────────────────────────────
+$distros = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0", '' } | Where-Object { $_ }
+$ubuntuInstalled = $distros | Where-Object { $_ -match '^Ubuntu' }
+
+if (-not $ubuntuInstalled) {
+    Write-Host 'Ubuntu not found. Installing WSL2 + Ubuntu (this may take a few minutes)...'
+    # wsl --install enables WSL2 feature and installs Ubuntu in one command (Windows 10 2004+ / 11)
+    wsl --install -d Ubuntu --no-launch
+    if ($LASTEXITCODE -ne 0) {
+        throw "wsl --install failed (exit $LASTEXITCODE). Ensure Windows is up to date and the Microsoft-Windows-Subsystem-Linux feature is available."
+    }
+    Write-Host 'Ubuntu installed.'
+} else {
+    Write-Host "Ubuntu already installed ($($ubuntuInstalled -join ', ')). Skipping."
+}
+
+# ── 2. WSL2 mirrored networking ───────────────────────────────────────────────
 $WslConfigPath = Join-Path $env:USERPROFILE '.wslconfig'
 if (Test-Path $WslConfigPath) {
     $existing = Get-Content $WslConfigPath -Raw -ErrorAction SilentlyContinue
@@ -62,7 +68,12 @@ if (Test-Path $WslConfigPath) {
     Write-Host "Created $WslConfigPath with networkingMode=mirrored."
 }
 
-# ── 2. Windows Firewall — TCP 2026 inbound ────────────────────────────────────
+# ── 3. Restart WSL2 so mirrored networking takes effect ──────────────────────
+Write-Host 'Restarting WSL2...'
+wsl --shutdown
+Start-Sleep -Seconds 2
+
+# ── 4. Windows Firewall — TCP 2026 inbound ────────────────────────────────────
 $fw = 'AltosecEmailSchedulerHTTP2026'
 if (-not (Get-NetFirewallRule -Name $fw -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -Name $fw `
@@ -73,14 +84,12 @@ if (-not (Get-NetFirewallRule -Name $fw -ErrorAction SilentlyContinue)) {
     Write-Host "Firewall rule $fw already exists."
 }
 
-# ── 3. Machine environment variable ──────────────────────────────────────────
+# ── 5. Machine environment variable ──────────────────────────────────────────
 [Environment]::SetEnvironmentVariable('ALTOSEC_EMAIL_DEPLOY_DIR', $DeployDir.Trim(), 'Machine')
 [Environment]::SetEnvironmentVariable('ALTOSEC_DEPLOY_HTTP_ONLY', 'true', 'Machine')
 Write-Host "Machine env: ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim())  ALTOSEC_DEPLOY_HTTP_ONLY=true"
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# ── 6. Run Linux bootstrap inside WSL2 Ubuntu ────────────────────────────────
 Write-Host ''
-Write-Host 'Windows-side setup complete. Next steps:'
-Write-Host '  1. wsl --shutdown          (apply mirrored networking)'
-Write-Host '  2. wsl -d Ubuntu           (open WSL2 Ubuntu)'
-Write-Host '  3. curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash'
+Write-Host 'Launching Linux bootstrap inside WSL2 Ubuntu...'
+wsl -d Ubuntu -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash"
