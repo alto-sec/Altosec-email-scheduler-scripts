@@ -28,18 +28,21 @@ if ([string]::IsNullOrWhiteSpace($DeployDir)) {
 
 # ── 1. WSL2 feature + Ubuntu install (idempotent) ────────────────────────────
 $distros = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0", '' } | Where-Object { $_ }
-$ubuntuInstalled = $distros | Where-Object { $_ -match '^Ubuntu' }
+$ubuntuDistro = $distros | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
 
-if (-not $ubuntuInstalled) {
+if (-not $ubuntuDistro) {
     Write-Host 'Ubuntu not found. Installing WSL2 + Ubuntu (this may take a few minutes)...'
-    # wsl --install enables WSL2 feature and installs Ubuntu in one command (Windows 10 2004+ / 11)
     wsl --install -d Ubuntu --no-launch
     if ($LASTEXITCODE -ne 0) {
         throw "wsl --install failed (exit $LASTEXITCODE). Ensure Windows is up to date and the Microsoft-Windows-Subsystem-Linux feature is available."
     }
-    Write-Host 'Ubuntu installed.'
+    # Re-detect after install
+    $distros = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0", '' } | Where-Object { $_ }
+    $ubuntuDistro = $distros | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
+    if (-not $ubuntuDistro) { throw 'Ubuntu install succeeded but distro name not found. Try: wsl --list' }
+    Write-Host "Ubuntu installed: $ubuntuDistro"
 } else {
-    Write-Host "Ubuntu already installed ($($ubuntuInstalled -join ', ')). Skipping."
+    Write-Host "Ubuntu already installed ($ubuntuDistro). Skipping."
 }
 
 # ── 2. WSL2 mirrored networking ───────────────────────────────────────────────
@@ -92,4 +95,4 @@ Write-Host "Machine env: ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim())  ALTOSEC_
 # ── 6. Run Linux bootstrap inside WSL2 Ubuntu ────────────────────────────────
 Write-Host ''
 Write-Host 'Launching Linux bootstrap inside WSL2 Ubuntu...'
-wsl -d Ubuntu -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash"
+wsl -d $ubuntuDistro -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash"
