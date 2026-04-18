@@ -72,23 +72,8 @@ if (Test-Path $WslConfigPath) {
 }
 
 # ── 3. Enable systemd inside WSL2 (required for Docker auto-start) ───────────
-# /etc/wsl.conf [boot] systemd=true makes Docker start automatically on WSL2 boot.
-# Must be set before wsl --shutdown so it takes effect on next WSL2 start.
 Write-Host 'Enabling systemd in WSL2 Ubuntu...'
-$wslConfCmd = @'
-set -e
-conf=/etc/wsl.conf
-if grep -q "^systemd=true" "$conf" 2>/dev/null; then
-  echo "systemd already enabled in $conf"
-elif grep -q "\[boot\]" "$conf" 2>/dev/null; then
-  sed -i '/\[boot\]/a systemd=true' "$conf"
-  echo "Added systemd=true under [boot] in $conf"
-else
-  printf '\n[boot]\nsystemd=true\n' >> "$conf"
-  echo "Added [boot] systemd=true to $conf"
-fi
-'@
-wsl -d $ubuntuDistro -- bash -c $wslConfCmd
+wsl -d $ubuntuDistro -u root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null && echo 'systemd already enabled' || (printf '[boot]\nsystemd=true\n' >> /etc/wsl.conf && echo 'systemd enabled')"
 
 # ── 4. Restart WSL2 so mirrored networking + systemd both take effect ─────────
 Write-Host 'Restarting WSL2 (applying mirrored networking + systemd)...'
@@ -114,4 +99,4 @@ Write-Host "Machine env: ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim())  ALTOSEC_
 # ── 6. Run Linux bootstrap inside WSL2 Ubuntu ────────────────────────────────
 Write-Host ''
 Write-Host 'Launching Linux bootstrap inside WSL2 Ubuntu...'
-wsl -d $ubuntuDistro -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | sudo bash"
+wsl -d $ubuntuDistro -u root -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | bash"
