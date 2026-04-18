@@ -235,34 +235,52 @@ print(asset['browser_download_url'] if asset else '')
   info "Runner configured."
 fi
 
-# ── Step 6: Runner service (systemd or init.d) ────────────────────────────────
+# ── Step 6: Runner service ────────────────────────────────────────────────────
+# svc.sh requires the working directory to be the runner root.
 SVC_FILE_MARKER="$RUNNER_ROOT/.service"
+SYSTEMD_OK=false
+if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null 2>&1; then
+  SYSTEMD_OK=true
+fi
+
+pushd "$RUNNER_ROOT" >/dev/null
 
 if [[ -f "$SVC_FILE_MARKER" ]]; then
   SVC_NAME="$(cat "$SVC_FILE_MARKER")"
-  if command -v systemctl &>/dev/null \
-     && systemctl is-active --quiet "$SVC_NAME" 2>/dev/null; then
+  if $SYSTEMD_OK && systemctl is-active --quiet "$SVC_NAME" 2>/dev/null; then
     info "Runner service '$SVC_NAME' already active. Skipping."
   else
-    info "Starting runner service '$SVC_NAME'..."
-    "$RUNNER_ROOT/svc.sh" start || true
+    if $SYSTEMD_OK; then
+      info "Starting runner service '$SVC_NAME'..."
+      ./svc.sh start
+    else
+      # systemd not running (e.g. nested-virt VM without systemd support):
+      # reinstall service so svc.sh regenerates the unit file, then start manually.
+      info "systemd not running — reinstalling and starting runner service..."
+      ./svc.sh stop  2>/dev/null || true
+      ./svc.sh uninstall 2>/dev/null || true
+      ./svc.sh install "$RUNNER_SVC_USER"
+      ./svc.sh start
+    fi
   fi
 else
   info "Installing runner as system service..."
-  # svc.sh must be run from the runner directory
-  pushd "$RUNNER_ROOT" >/dev/null
   ./svc.sh install "$RUNNER_SVC_USER"
   ./svc.sh start
-  popd >/dev/null
   info "Runner service installed and started."
 fi
+
+popd >/dev/null
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 SVC_STATUS="unknown"
 if [[ -f "$SVC_FILE_MARKER" ]]; then
   SVC_NAME="$(cat "$SVC_FILE_MARKER")"
-  if command -v systemctl &>/dev/null 2>/dev/null; then
-    SVC_STATUS="$(systemctl is-active "$SVC_NAME" 2>/dev/null || echo 'unknown')"
+  if $SYSTEMD_OK; then
+    SVC_STATUS="$(systemctl is-active "$SVC_NAME" 2>/dev/null || echo 'inactive')"
+  else
+    # Without systemd check the process directly
+    SVC_STATUS="$(pgrep -f 'Runner.Listener' &>/dev/null && echo 'running' || echo 'inactive')"
   fi
 fi
 
