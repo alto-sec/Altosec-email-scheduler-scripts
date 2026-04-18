@@ -250,6 +250,14 @@ if [[ -f "$SVC_FILE_MARKER" ]]; then
   if $SYSTEMD_OK && systemctl is-active --quiet "$SVC_NAME" 2>/dev/null; then
     info "Runner service '$SVC_NAME' already active. Skipping."
   else
+    # Check if the systemd unit file actually exists on disk.
+    # It may be missing if svc.sh install previously ran before systemd was active.
+    UNIT_FILE="/etc/systemd/system/$SVC_NAME"
+    if $SYSTEMD_OK && [[ ! -f "$UNIT_FILE" ]]; then
+      info "Unit file missing — reinstalling runner service..."
+      ./svc.sh uninstall 2>/dev/null || true
+      ./svc.sh install "$RUNNER_SVC_USER"
+    fi
     if $SYSTEMD_OK; then
       info "Starting runner service '$SVC_NAME'..."
       ./svc.sh start
