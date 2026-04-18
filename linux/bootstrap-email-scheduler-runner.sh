@@ -129,18 +129,8 @@ https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" \
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-  # Enable Docker on boot (systemd or init.d as available; no-op in WSL2 without systemd)
-  if command -v systemctl &>/dev/null && systemctl is-system-running --quiet 2>/dev/null; then
-    systemctl enable --now docker
-  elif is_wsl; then
-    # WSL2 without systemd: start daemon manually
-    if ! pgrep -x dockerd &>/dev/null; then
-      nohup dockerd &>/var/log/dockerd.log & disown
-      sleep 2
-    fi
-    warn "WSL2 without systemd: Docker started manually. Enable systemd in /etc/wsl.conf for auto-start."
-  fi
-  info "Docker Engine installed."
+  systemctl enable --now docker
+  info "Docker Engine installed and enabled."
 fi
 
 # ── Step 2: Service user ──────────────────────────────────────────────────────

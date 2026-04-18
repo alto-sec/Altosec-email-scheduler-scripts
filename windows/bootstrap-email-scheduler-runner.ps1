@@ -71,10 +71,29 @@ if (Test-Path $WslConfigPath) {
     Write-Host "Created $WslConfigPath with networkingMode=mirrored."
 }
 
-# ── 3. Restart WSL2 so mirrored networking takes effect ──────────────────────
-Write-Host 'Restarting WSL2...'
+# ── 3. Enable systemd inside WSL2 (required for Docker auto-start) ───────────
+# /etc/wsl.conf [boot] systemd=true makes Docker start automatically on WSL2 boot.
+# Must be set before wsl --shutdown so it takes effect on next WSL2 start.
+Write-Host 'Enabling systemd in WSL2 Ubuntu...'
+$wslConfCmd = @'
+set -e
+conf=/etc/wsl.conf
+if grep -q "^systemd=true" "$conf" 2>/dev/null; then
+  echo "systemd already enabled in $conf"
+elif grep -q "\[boot\]" "$conf" 2>/dev/null; then
+  sed -i '/\[boot\]/a systemd=true' "$conf"
+  echo "Added systemd=true under [boot] in $conf"
+else
+  printf '\n[boot]\nsystemd=true\n' >> "$conf"
+  echo "Added [boot] systemd=true to $conf"
+fi
+'@
+wsl -d $ubuntuDistro -- bash -c $wslConfCmd
+
+# ── 4. Restart WSL2 so mirrored networking + systemd both take effect ─────────
+Write-Host 'Restarting WSL2 (applying mirrored networking + systemd)...'
 wsl --shutdown
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 3
 
 # ── 4. Windows Firewall — TCP 2026 inbound ────────────────────────────────────
 $fw = 'AltosecEmailSchedulerHTTP2026'
