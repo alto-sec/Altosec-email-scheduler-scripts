@@ -210,9 +210,6 @@ if [[ -f "$RUNNER_ROOT/.service" ]]; then
   rm -f "/etc/systemd/system/$OLD_SVC"
   systemctl daemon-reload 2>/dev/null || true
 fi
-# Also kill any nohup runner process still running.
-pkill -f 'Runner.Listener' 2>/dev/null || true
-
 # Always wipe the entire runner directory — the runner uses .credentials (not
 # .runner) for IsConfigured(), so removing individual files is unreliable.
 info "Removing $RUNNER_ROOT for clean install..."
