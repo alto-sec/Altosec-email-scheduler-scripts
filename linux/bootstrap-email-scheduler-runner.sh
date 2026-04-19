@@ -106,9 +106,7 @@ info "Deploy dir: $DEPLOY_DIR"
 is_wsl && info "Environment: WSL2 detected"
 
 # ── Step 1: Docker Engine ─────────────────────────────────────────────────────
-if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  info "Docker Engine already installed ($(docker --version 2>/dev/null | head -1)). Skipping."
-else
+if ! command -v docker &>/dev/null; then
   info "Installing Docker Engine (apt)..."
   DEBIAN_FRONTEND=noninteractive apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -129,8 +127,19 @@ https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" \
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-  systemctl enable --now docker
-  info "Docker Engine installed and enabled."
+  info "Docker Engine installed."
+else
+  info "Docker Engine already present ($(docker --version 2>/dev/null | head -1)). Skipping install."
+fi
+
+# Start Docker daemon if not already running (WSL2 has no auto-start without systemd).
+if ! docker info &>/dev/null 2>&1; then
+  info "Starting Docker daemon..."
+  if is_wsl; then
+    service docker start
+  else
+    systemctl enable --now docker
+  fi
 fi
 
 # ── Step 2: Service user ──────────────────────────────────────────────────────
@@ -193,17 +202,29 @@ else
 fi
 
 # ── Step 5: GitHub Actions runner ────────────────────────────────────────────
+# Stop and uninstall any existing systemd service before wiping the directory.
+if [[ -f "$RUNNER_ROOT/.service" ]]; then
+  OLD_SVC="$(cat "$RUNNER_ROOT/.service")"
+  systemctl stop    "$OLD_SVC" 2>/dev/null || true
+  systemctl disable "$OLD_SVC" 2>/dev/null || true
+  rm -f "/etc/systemd/system/$OLD_SVC"
+  systemctl daemon-reload 2>/dev/null || true
+fi
+# Also kill any nohup runner process still running.
+pkill -f 'Runner.Listener' 2>/dev/null || true
+
+# Always wipe the entire runner directory — the runner uses .credentials (not
+# .runner) for IsConfigured(), so removing individual files is unreliable.
+info "Removing $RUNNER_ROOT for clean install..."
+rm -rf "$RUNNER_ROOT"
 mkdir -p "$RUNNER_ROOT"
 
-if [[ -f "$RUNNER_ROOT/.runner" ]]; then
-  info "Runner already configured ($RUNNER_ROOT/.runner exists). Skipping download and config."
-else
-  info "Downloading latest GitHub Actions runner (linux-x64)..."
-  RUNNER_REL="$(curl -fsSL \
-    -H 'User-Agent: Altosec-EmailScheduler-RunnerBootstrap' \
-    https://api.github.com/repos/actions/runner/releases/latest)"
+info "Downloading latest GitHub Actions runner (linux-x64)..."
+RUNNER_REL="$(curl -fsSL \
+  -H 'User-Agent: Altosec-EmailScheduler-RunnerBootstrap' \
+  https://api.github.com/repos/actions/runner/releases/latest)"
 
-  RUNNER_URL="$(echo "$RUNNER_REL" | python3 -c "
+RUNNER_URL="$(echo "$RUNNER_REL" | python3 -c "
 import sys, json
 rel = json.load(sys.stdin)
 asset = next(
@@ -212,84 +233,60 @@ asset = next(
   None)
 print(asset['browser_download_url'] if asset else '')
 ")"
-  [[ -z "$RUNNER_URL" ]] && die "Could not find linux-x64 runner tar.gz in latest release."
+[[ -z "$RUNNER_URL" ]] && die "Could not find linux-x64 runner tar.gz in latest release."
 
-  RUNNER_TAR="/tmp/actions-runner-linux.tar.gz"
-  info "Downloading: $RUNNER_URL"
-  curl -fsSL -o "$RUNNER_TAR" "$RUNNER_URL"
-  tar -xzf "$RUNNER_TAR" -C "$RUNNER_ROOT"
-  rm -f "$RUNNER_TAR"
+RUNNER_TAR="/tmp/actions-runner-linux.tar.gz"
+info "Downloading: $RUNNER_URL"
+curl -fsSL -o "$RUNNER_TAR" "$RUNNER_URL"
+tar -xzf "$RUNNER_TAR" -C "$RUNNER_ROOT"
+rm -f "$RUNNER_TAR"
 
-  chown -R "$RUNNER_SVC_USER:$RUNNER_SVC_USER" "$RUNNER_ROOT"
+chown -R "$RUNNER_SVC_USER:$RUNNER_SVC_USER" "$RUNNER_ROOT"
 
-  LABEL_LIST="self-hosted,Linux,altosec-proxy-node,$RUNNER_NAME"
-  info "Configuring runner  name=$RUNNER_NAME  labels=$LABEL_LIST"
+LABEL_LIST="self-hosted,Linux,altosec-proxy-node,$RUNNER_NAME"
+info "Configuring runner  name=$RUNNER_NAME  labels=$LABEL_LIST"
 
-  sudo -u "$RUNNER_SVC_USER" "$RUNNER_ROOT/config.sh" \
-    --url "$REPO_URL" \
-    --token "$REGISTRATION_TOKEN" \
-    --name "$RUNNER_NAME" \
-    --labels "$LABEL_LIST" \
-    --unattended \
-    --replace
-  info "Runner configured."
-fi
+sudo -u "$RUNNER_SVC_USER" "$RUNNER_ROOT/config.sh" \
+  --url "$REPO_URL" \
+  --token "$REGISTRATION_TOKEN" \
+  --name "$RUNNER_NAME" \
+  --labels "$LABEL_LIST" \
+  --unattended \
+  --replace
+info "Runner configured."
 
-# ── Step 6: Runner service ────────────────────────────────────────────────────
-# svc.sh requires the working directory to be the runner root.
-SVC_FILE_MARKER="$RUNNER_ROOT/.service"
-SYSTEMD_OK=false
-if command -v systemctl &>/dev/null && systemctl is-system-running &>/dev/null 2>&1; then
-  SYSTEMD_OK=true
-fi
+# ── Step 6: Start runner ──────────────────────────────────────────────────────
+chown -R "$RUNNER_SVC_USER:$RUNNER_SVC_USER" "$RUNNER_ROOT"
 
-pushd "$RUNNER_ROOT" >/dev/null
-
-if [[ -f "$SVC_FILE_MARKER" ]]; then
-  SVC_NAME="$(cat "$SVC_FILE_MARKER")"
-  if $SYSTEMD_OK && systemctl is-active --quiet "$SVC_NAME" 2>/dev/null; then
-    info "Runner service '$SVC_NAME' already active. Skipping."
+if is_wsl; then
+  # WSL2: systemd is unavailable on Windows VPS hosts without nested virtualisation.
+  # Start runner with nohup; Windows Task Scheduler handles reboot auto-start.
+  LOG_FILE="$DEPLOY_DIR/runner.log"
+  nohup sudo -u "$RUNNER_SVC_USER" bash "$RUNNER_ROOT/run.sh" >> "$LOG_FILE" 2>&1 &
+  RUNNER_PID=$!
+  sleep 4
+  if kill -0 "$RUNNER_PID" 2>/dev/null; then
+    info "Runner started (PID $RUNNER_PID). Log: $LOG_FILE"
   else
-    # Check if the systemd unit file actually exists on disk.
-    # It may be missing if svc.sh install previously ran before systemd was active.
-    UNIT_FILE="/etc/systemd/system/$SVC_NAME"
-    if $SYSTEMD_OK && [[ ! -f "$UNIT_FILE" ]]; then
-      info "Unit file missing — reinstalling runner service..."
-      ./svc.sh uninstall 2>/dev/null || true
-      ./svc.sh install "$RUNNER_SVC_USER"
-    fi
-    if $SYSTEMD_OK; then
-      info "Starting runner service '$SVC_NAME'..."
-      ./svc.sh start
-    else
-      # systemd not running (e.g. nested-virt VM without systemd support):
-      # reinstall service so svc.sh regenerates the unit file, then start manually.
-      info "systemd not running — reinstalling and starting runner service..."
-      ./svc.sh stop  2>/dev/null || true
-      ./svc.sh uninstall 2>/dev/null || true
-      ./svc.sh install "$RUNNER_SVC_USER"
-      ./svc.sh start
-    fi
+    die "Runner exited immediately. Check log: $LOG_FILE"
   fi
 else
-  info "Installing runner as system service..."
+  # Bare-metal Linux: install and start as a systemd service.
+  pushd "$RUNNER_ROOT" >/dev/null
+  info "Installing runner as systemd service..."
   ./svc.sh install "$RUNNER_SVC_USER"
   ./svc.sh start
   info "Runner service installed and started."
+  popd >/dev/null
 fi
-
-popd >/dev/null
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 SVC_STATUS="unknown"
-if [[ -f "$SVC_FILE_MARKER" ]]; then
-  SVC_NAME="$(cat "$SVC_FILE_MARKER")"
-  if $SYSTEMD_OK; then
-    SVC_STATUS="$(systemctl is-active "$SVC_NAME" 2>/dev/null || echo 'inactive')"
-  else
-    # Without systemd check the process directly
-    SVC_STATUS="$(pgrep -f 'Runner.Listener' &>/dev/null && echo 'running' || echo 'inactive')"
-  fi
+if is_wsl; then
+  pgrep -f 'Runner.Listener' &>/dev/null && SVC_STATUS="running" || SVC_STATUS="not running"
+elif [[ -f "$RUNNER_ROOT/.service" ]]; then
+  SVC_NAME="$(cat "$RUNNER_ROOT/.service")"
+  SVC_STATUS="$(systemctl is-active "$SVC_NAME" 2>/dev/null || echo 'inactive')"
 fi
 
 info "=== Bootstrap complete ==="

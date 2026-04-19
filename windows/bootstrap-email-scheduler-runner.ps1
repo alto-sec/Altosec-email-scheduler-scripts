@@ -71,12 +71,13 @@ if (Test-Path $WslConfigPath) {
     Write-Host "Created $WslConfigPath with networkingMode=mirrored."
 }
 
-# ── 3. Enable systemd inside WSL2 (required for Docker auto-start) ───────────
-Write-Host 'Enabling systemd in WSL2 Ubuntu...'
-wsl -d $ubuntuDistro -u root -- bash -c "grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null && echo 'systemd already enabled' || (printf '[boot]\nsystemd=true\n' >> /etc/wsl.conf && echo 'systemd enabled')"
+# ── 3. Disable systemd in WSL2 (causes boot failure on VPS without nested-virt) ──
+# Docker and the runner work fine without systemd (SysV fallback + nohup).
+Write-Host 'Ensuring systemd is disabled in WSL2 Ubuntu...'
+wsl -d $ubuntuDistro -u root -- bash -c "sed -i 's/^systemd=true/#systemd=true/' /etc/wsl.conf 2>/dev/null; echo 'wsl.conf: systemd disabled'"
 
-# ── 4. Restart WSL2 so mirrored networking + systemd both take effect ─────────
-Write-Host 'Restarting WSL2 (applying mirrored networking + systemd)...'
+# ── 4. Restart WSL2 so mirrored networking + systemd change both take effect ──
+Write-Host 'Restarting WSL2...'
 wsl --shutdown
 Start-Sleep -Seconds 3
 
@@ -100,3 +101,14 @@ Write-Host "Machine env: ALTOSEC_EMAIL_DEPLOY_DIR=$($DeployDir.Trim())  ALTOSEC_
 Write-Host ''
 Write-Host 'Launching Linux bootstrap inside WSL2 Ubuntu...'
 wsl -d $ubuntuDistro -u root -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | bash"
+
+# ── 7. Windows Task Scheduler: auto-start Docker + runner on logon ────────────
+# WSL2 has no systemd-based auto-start, so a Task Scheduler task re-starts
+# the Docker daemon and runner process every time the user logs on to Windows.
+$taskName = 'AltosecEmailSchedulerRunner'
+$startCmd = 'service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup sudo -u runner-svc bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 &'
+$action   = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $ubuntuDistro -u root -- bash -c `"$startCmd`""
+$trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit 0
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
+Write-Host "Task Scheduler: '$taskName' registered — Docker + runner restart on logon."
