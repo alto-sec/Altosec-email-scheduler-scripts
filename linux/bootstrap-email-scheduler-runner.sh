@@ -68,7 +68,7 @@ require_root
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/actions-runner-email-scheduler}"
 DEPLOY_DIR="${ALTOSEC_EMAIL_DEPLOY_DIR:-/opt/altosec-deploy-email}"
 REPO_URL="${REPO_URL:-https://github.com/alto-sec/Altosec-email-scheduler}"
-RUNNER_SVC_USER="runner-svc"
+RUNNER_SVC_USER="root"
 
 # ── interactive prompts ───────────────────────────────────────────────────────
 # Always read from /dev/tty so prompts work even when stdin is a pipe
@@ -143,12 +143,13 @@ if ! docker info &>/dev/null 2>&1; then
 fi
 
 # ── Step 2: Service user ──────────────────────────────────────────────────────
-if ! id -u "$RUNNER_SVC_USER" &>/dev/null; then
-  useradd -m -s /bin/bash "$RUNNER_SVC_USER"
-  info "Created user $RUNNER_SVC_USER."
+if [[ "$RUNNER_SVC_USER" != "root" ]]; then
+  if ! id -u "$RUNNER_SVC_USER" &>/dev/null; then
+    useradd -m -s /bin/bash "$RUNNER_SVC_USER"
+    info "Created user $RUNNER_SVC_USER."
+  fi
+  usermod -aG docker "$RUNNER_SVC_USER"
 fi
-# Add to docker group (idempotent)
-usermod -aG docker "$RUNNER_SVC_USER"
 
 # ── Step 3: Environment variables ────────────────────────────────────────────
 # Persist in /etc/environment (read by PAM / systemd EnvironmentFile)

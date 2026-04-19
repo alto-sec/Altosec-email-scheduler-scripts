@@ -103,7 +103,7 @@ wsl -d $ubuntuDistro -u root -- bash -c "curl -fsSL https://raw.githubuserconten
 # WSL2 has no systemd-based auto-start, so a Task Scheduler task re-starts
 # the Docker daemon and runner process every time the user logs on to Windows.
 $taskName = 'AltosecEmailSchedulerRunner'
-$startCmd = 'service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup sudo -u runner-svc bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 &'
+$startCmd = 'service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 &'
 $action   = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $ubuntuDistro -u root -- bash -c `"$startCmd`""
 $trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit 0
