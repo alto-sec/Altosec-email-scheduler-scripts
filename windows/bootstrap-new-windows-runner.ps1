@@ -104,7 +104,7 @@ wsl -d $ubuntuDistro -u root -- bash -c "curl -fsSL https://raw.githubuserconten
 # If not running, starts Docker + runner. Handles WSL2 restarts without
 # requiring a Windows logon event.
 $taskName = 'AltosecEmailSchedulerRunner'
-$watchCmd = 'pgrep -f Runner.Listener > /dev/null 2>&1 || { service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 & }'
+$watchCmd = 'pgrep -f Runner.Listener > /dev/null 2>&1 || { service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup env RUNNER_ALLOW_RUNASROOT=1 bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 & }'
 $action   = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $ubuntuDistro -u root -- bash -c `"$watchCmd`""
 $trigger  = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 2) -Once -At (Get-Date)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
