@@ -99,13 +99,14 @@ Write-Host ''
 Write-Host 'Launching Linux bootstrap inside WSL2 Ubuntu...'
 wsl -d $ubuntuDistro -u root -- bash -c "curl -fsSL https://raw.githubusercontent.com/alto-sec/Altosec-email-scheduler-scripts/main/linux/bootstrap-email-scheduler-runner.sh | bash"
 
-# ── 7. Windows Task Scheduler: auto-start Docker + runner on logon ────────────
-# WSL2 has no systemd-based auto-start, so a Task Scheduler task re-starts
-# the Docker daemon and runner process every time the user logs on to Windows.
+# ── 7. Windows Task Scheduler: watchdog every 2 minutes ──────────────────────
+# Checks if Runner.Listener is alive inside WSL2 every 2 minutes.
+# If not running, starts Docker + runner. Handles WSL2 restarts without
+# requiring a Windows logon event.
 $taskName = 'AltosecEmailSchedulerRunner'
-$startCmd = 'service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 &'
-$action   = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $ubuntuDistro -u root -- bash -c `"$startCmd`""
-$trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit 0
+$watchCmd = 'pgrep -f Runner.Listener > /dev/null 2>&1 || { service docker start 2>/dev/null; sleep 2; cd /opt/actions-runner-email-scheduler && nohup bash run.sh >> /opt/altosec-deploy-email/runner.log 2>&1 & }'
+$action   = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument "-d $ubuntuDistro -u root -- bash -c `"$watchCmd`""
+$trigger  = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 2) -Once -At (Get-Date)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
-Write-Host "Task Scheduler: '$taskName' registered — Docker + runner restart on logon."
+Write-Host "Task Scheduler: '$taskName' registered — watchdog every 2 minutes."
