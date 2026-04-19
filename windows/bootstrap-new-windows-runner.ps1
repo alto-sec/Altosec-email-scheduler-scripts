@@ -26,23 +26,20 @@ if ([string]::IsNullOrWhiteSpace($DeployDir)) {
     $DeployDir = if ([string]::IsNullOrWhiteSpace($line)) { 'C:\altosec-deploy-email' } else { $line.Trim() }
 }
 
-# ── 1. WSL2 feature + Ubuntu install (idempotent) ────────────────────────────
+# ── 1. WSL2 feature + Ubuntu-24.04 install (idempotent) ──────────────────────
+$ubuntuDistro = 'Ubuntu-24.04'
 $distros = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0", '' } | Where-Object { $_ }
-$ubuntuDistro = $distros | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
+$found = $distros | Where-Object { $_ -eq $ubuntuDistro } | Select-Object -First 1
 
-if (-not $ubuntuDistro) {
-    Write-Host 'Ubuntu not found. Installing WSL2 + Ubuntu (this may take a few minutes)...'
-    wsl --install -d Ubuntu --no-launch
+if (-not $found) {
+    Write-Host "$ubuntuDistro not found. Installing (this may take a few minutes)..."
+    wsl --install -d $ubuntuDistro --no-launch
     if ($LASTEXITCODE -ne 0) {
-        throw "wsl --install failed (exit $LASTEXITCODE). Ensure Windows is up to date and the Microsoft-Windows-Subsystem-Linux feature is available."
+        throw "wsl --install -d $ubuntuDistro failed (exit $LASTEXITCODE). Ensure Windows is up to date."
     }
-    # Re-detect after install
-    $distros = wsl --list --quiet 2>$null | ForEach-Object { $_ -replace "`0", '' } | Where-Object { $_ }
-    $ubuntuDistro = $distros | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
-    if (-not $ubuntuDistro) { throw 'Ubuntu install succeeded but distro name not found. Try: wsl --list' }
-    Write-Host "Ubuntu installed: $ubuntuDistro"
+    Write-Host "$ubuntuDistro installed."
 } else {
-    Write-Host "Ubuntu already installed ($ubuntuDistro). Skipping."
+    Write-Host "$ubuntuDistro already installed. Skipping."
 }
 
 # ── 2. WSL2 mirrored networking ───────────────────────────────────────────────
