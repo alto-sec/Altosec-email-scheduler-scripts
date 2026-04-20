@@ -267,20 +267,42 @@ export RUNNER_ALLOW_RUNASROOT=1
   --unattended \
   --replace
 info "Runner configured."
-sleep 15
 
 # ── Step 6: Start runner ──────────────────────────────────────────────────────
 if is_wsl; then
-  # WSL2: systemd is unavailable on Windows VPS hosts without nested virtualisation.
-  # Start runner with nohup; Windows Task Scheduler handles reboot auto-start.
+  # WSL2: no systemd. Use a retry-watchdog script: GitHub registration takes up
+  # to ~2 minutes to propagate after config.sh — the first run.sh attempt gets
+  # "registration deleted"; the watchdog retries until it succeeds.
   LOG_FILE="$DEPLOY_DIR/runner.log"
-  nohup env RUNNER_ALLOW_RUNASROOT=1 bash "$RUNNER_ROOT/run.sh" > "$LOG_FILE" 2>&1 &
+  WATCHDOG="$DEPLOY_DIR/runner-watchdog.sh"
+  cat > "$WATCHDOG" << WATCHDOG_EOF
+#!/bin/bash
+export RUNNER_ALLOW_RUNASROOT=1
+for attempt in 1 2 3 4 5; do
+  echo "[\$(date)] Runner start attempt \$attempt" >> "$LOG_FILE"
+  RUN_OUT=\$(mktemp)
+  "$RUNNER_ROOT/run.sh" > "\$RUN_OUT" 2>&1
+  cat "\$RUN_OUT" >> "$LOG_FILE"
+  if grep -q 'runner registration has been deleted' "\$RUN_OUT"; then
+    rm -f "\$RUN_OUT"
+    echo "[\$(date)] GitHub registration not propagated yet — retrying in 60s (\$attempt/5)" >> "$LOG_FILE"
+    sleep 60
+  else
+    rm -f "\$RUN_OUT"
+    break
+  fi
+done
+WATCHDOG_EOF
+  chmod +x "$WATCHDOG"
+  > "$LOG_FILE"
+  nohup bash "$WATCHDOG" &
   RUNNER_PID=$!
   sleep 4
   if kill -0 "$RUNNER_PID" 2>/dev/null; then
-    info "Runner started (PID $RUNNER_PID). Log: $LOG_FILE"
+    info "Runner watchdog started (PID $RUNNER_PID). Log: $LOG_FILE"
+    info "Runner may auto-retry up to 5x if GitHub registration is still propagating."
   else
-    die "Runner exited immediately. Check log: $LOG_FILE"
+    die "Runner watchdog exited immediately. Check log: $LOG_FILE"
   fi
 else
   # Bare-metal Linux: install and start as a systemd service.
