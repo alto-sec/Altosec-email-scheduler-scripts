@@ -212,6 +212,11 @@ else
 fi
 
 # ── Step 5: GitHub Actions runner ────────────────────────────────────────────
+# Kill any Runner.Listener process running from our runner directory.
+# Use path-specific match so other projects' runners are not affected.
+pkill -f "${RUNNER_ROOT}/bin/Runner.Listener" 2>/dev/null || true
+sleep 1
+
 # Stop and uninstall any existing systemd service before wiping the directory.
 if [[ -f "$RUNNER_ROOT/.service" ]]; then
   OLD_SVC="$(cat "$RUNNER_ROOT/.service")"
@@ -268,7 +273,7 @@ if is_wsl; then
   # WSL2: systemd is unavailable on Windows VPS hosts without nested virtualisation.
   # Start runner with nohup; Windows Task Scheduler handles reboot auto-start.
   LOG_FILE="$DEPLOY_DIR/runner.log"
-  nohup bash "$RUNNER_ROOT/run.sh" >> "$LOG_FILE" 2>&1 &
+  nohup env RUNNER_ALLOW_RUNASROOT=1 bash "$RUNNER_ROOT/run.sh" >> "$LOG_FILE" 2>&1 &
   RUNNER_PID=$!
   sleep 4
   if kill -0 "$RUNNER_PID" 2>/dev/null; then
