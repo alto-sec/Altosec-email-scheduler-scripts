@@ -267,13 +267,14 @@ export RUNNER_ALLOW_RUNASROOT=1
   --unattended \
   --replace
 info "Runner configured."
+sleep 15
 
 # ── Step 6: Start runner ──────────────────────────────────────────────────────
 if is_wsl; then
   # WSL2: systemd is unavailable on Windows VPS hosts without nested virtualisation.
   # Start runner with nohup; Windows Task Scheduler handles reboot auto-start.
   LOG_FILE="$DEPLOY_DIR/runner.log"
-  nohup env RUNNER_ALLOW_RUNASROOT=1 bash "$RUNNER_ROOT/run.sh" >> "$LOG_FILE" 2>&1 &
+  nohup env RUNNER_ALLOW_RUNASROOT=1 bash "$RUNNER_ROOT/run.sh" > "$LOG_FILE" 2>&1 &
   RUNNER_PID=$!
   sleep 4
   if kill -0 "$RUNNER_PID" 2>/dev/null; then
