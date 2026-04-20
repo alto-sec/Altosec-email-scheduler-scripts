@@ -87,6 +87,9 @@ if $USE_TLS; then
 fi
 read_val RUNNER_NAME           "Runner name (unique on GitHub)" ""
 read_val REGISTRATION_TOKEN    "Registration token (GitHub -> New self-hosted runner)" ""
+_existing_url=""
+[[ -s "$DEPLOY_DIR/main-server-url.txt" ]] && _existing_url="$(cat "$DEPLOY_DIR/main-server-url.txt" | tr -d '\r\n' | xargs)"
+read_val MAIN_SERVER_URL       "Main server URL (e.g. http://1.2.3.4:18000)" "$_existing_url"
 
 # ── validation ────────────────────────────────────────────────────────────────
 RUNNER_NAME="${RUNNER_NAME//[[:space:]]/}"
@@ -170,6 +173,11 @@ mkdir -p "$DEPLOY_DIR"
 chown "$RUNNER_SVC_USER:$RUNNER_SVC_USER" "$DEPLOY_DIR"
 
 set_sys_env "ALTOSEC_EMAIL_DEPLOY_DIR" "$DEPLOY_DIR"
+
+if [[ -n "${MAIN_SERVER_URL:-}" ]]; then
+  echo "$MAIN_SERVER_URL" > "$DEPLOY_DIR/main-server-url.txt"
+  info "Saved MAIN_SERVER_URL → $DEPLOY_DIR/main-server-url.txt"
+fi
 
 if ! $USE_TLS; then
   set_sys_env "ALTOSEC_DEPLOY_HTTP_ONLY" "true"
